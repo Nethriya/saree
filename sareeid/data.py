@@ -109,15 +109,18 @@ def prepare(roots: list[str], out_dir: str, short: int = 320, min_side: int = 96
         root_p = Path(root)
         # kagglehub caches datasets as .../<slug>/versions/<n>: name the source by the slug
         src_name = root_p.parent.parent.name if root_p.name.isdigit() and root_p.parent.name == "versions" else root_p.name
-        for p in sorted(root_p.rglob("*")):
-            if p.suffix.lower() not in IMG_EXT or not p.is_file():
-                continue
-            raw = p.read_bytes()
+        files = sorted(p for p in root_p.rglob("*") if p.suffix.lower() in IMG_EXT and p.is_file())
+        print(f"[prepare] {root} ({src_name}): {len(files)} image files")
+        for n, p in enumerate(files, 1):
+            if n % 500 == 0:
+                print(f"  {n}/{len(files)}", flush=True)
+            raw = p.read_bytes()  # read once: network drives (Colab/Drive) are slow
             md5 = hashlib.md5(raw).hexdigest()
             if md5 in seen_md5:  # byte-identical file listed twice
                 n_dup += 1
                 continue
-            img = read_rgb(p)
+            bgr = cv2.imdecode(np.frombuffer(raw, np.uint8), cv2.IMREAD_COLOR) if raw else None
+            img = None if bgr is None else cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
             if img is None:
                 n_bad += 1
                 continue
@@ -131,6 +134,9 @@ def prepare(roots: list[str], out_dir: str, short: int = 320, min_side: int = 96
                 cv2.imwrite(str(cp), cv2.cvtColor(img, cv2.COLOR_RGB2BGR), [cv2.IMWRITE_JPEG_QUALITY, 95])
             rows.append({"path": str(cp), "source": src_name, "orig": str(p), "hash": phash(img)})
     keys = [r["source"] + "/" + source_stem(r["orig"]) if ".rf." in r["orig"] else r["orig"] for r in rows]
+    if len(rows) < 10:
+        raise RuntimeError(f"only {len(rows)} usable images found under {roots} "
+                           f"({n_bad} unreadable, {n_small} too small) - check the dataset paths")
     groups = _group_by_hash([r["hash"] for r in rows], hash_thr, keys)
     rng = np.random.default_rng(seed)
     ug = rng.permutation(max(groups) + 1)

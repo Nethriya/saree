@@ -134,7 +134,8 @@ ROOTS = [r for r in (DEEPLURE, KAGGLE_DIR) if r]
 assert ROOTS, 'No data found'
 """)
 code("""
-!python -m sareeid.prepare --roots {' '.join(f'"{r}"' for r in ROOTS)} --out {WORK}
+from sareeid.data import prepare
+prepare(ROOTS, WORK)
 """)
 code("""
 import pandas as pd
