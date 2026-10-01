@@ -35,7 +35,8 @@ Two families, **per-channel tone curves** and **Reinhard color transfer**, are *
 |---|---|---|
 | Ingest | recursive scan; drop unreadable files, images <96 px and MD5 byte-duplicates | the datasets are scraped and noisy |
 | Cache | resize to short side 320 and store as JPEG | 10–50× faster data loading |
-| Dedupe-group | 64-bit DCT pHash; pairs whose Hamming distance ≤6 under **any of the 8 rotations/flips** are union-found into one group | re-uploads and rotated copies would otherwise leak across splits (training is rotation-invariant) |
+| Dedupe-group | 64-bit DCT pHash; pairs whose Hamming distance ≤6 under **any of the 8 rotations/flips** are union-found into one group. Roboflow copies (`<photo>_jpg.rf.<hash>.jpg`) of one source photo are also merged | re-uploads, rotated copies and Roboflow augmentations would otherwise leak across splits (training is rotation-invariant) |
+| Re-split | the Kaggle set's own train/valid/test folders and style classes are ignored | they are not design-disjoint; we re-split by group |
 | Split | 70/10/20 train/val/test **by group**, seed 0 | test designs are never seen in training |
 | Train view | random resized crop (0.35–1) → recolor → flip / rot90 / small rotation / blur / uneven light / noise / JPEG → ImageNet norm | fabric has no canonical orientation; phone photos vary |
 | Model | `convnext_atto.d2_in1k` → GeM (learnable p) → Linear(320→256) + BN → L2 | see §4 |

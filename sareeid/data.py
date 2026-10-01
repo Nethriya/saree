@@ -58,8 +58,16 @@ def _popcount(x: np.ndarray) -> np.ndarray:
     return _POP8[x.view(np.uint8).reshape(*x.shape, 8)].sum(-1)
 
 
-def _group_by_hash(hashes: list[list[int]], thr: int) -> list[int]:
-    """Union-find over pairs whose min Hamming distance (over the 8 orientations) <= thr."""
+def source_stem(path: str) -> str:
+    """Roboflow exports save several augmented copies of one photo as `<name>_jpg.rf.<hash>.jpg`;
+    everything before `.rf.` identifies the source photo."""
+    name = Path(path).name
+    return name.split(".rf.")[0] if ".rf." in name else name
+
+
+def _group_by_hash(hashes: list[list[int]], thr: int, keys: list[str] | None = None) -> list[int]:
+    """Union-find over pairs whose min Hamming distance (over the 8 orientations) <= thr,
+    plus pairs sharing the same source key (e.g. Roboflow augmentations of one photo)."""
     n = len(hashes)
     H = np.array(hashes, dtype=np.uint64)  # (n, 8)
     parent = list(range(n))
@@ -76,6 +84,15 @@ def _group_by_hash(hashes: list[list[int]], thr: int) -> list[int]:
             a, b = find(i), find(i + 1 + int(j))
             if a != b:
                 parent[b] = a
+    if keys is not None:
+        first: dict[str, int] = {}
+        for i, k in enumerate(keys):
+            if k in first:
+                a, b = find(first[k]), find(i)
+                if a != b:
+                    parent[b] = a
+            else:
+                first[k] = i
     roots = [find(i) for i in range(n)]
     remap = {r: k for k, r in enumerate(dict.fromkeys(roots))}
     return [remap[r] for r in roots]
@@ -111,7 +128,8 @@ def prepare(roots: list[str], out_dir: str, short: int = 320, min_side: int = 96
             if not cp.exists():
                 cv2.imwrite(str(cp), cv2.cvtColor(img, cv2.COLOR_RGB2BGR), [cv2.IMWRITE_JPEG_QUALITY, 95])
             rows.append({"path": str(cp), "source": root_p.name, "orig": str(p), "hash": phash(img)})
-    groups = _group_by_hash([r["hash"] for r in rows], hash_thr)
+    keys = [r["source"] + "/" + source_stem(r["orig"]) if ".rf." in r["orig"] else r["orig"] for r in rows]
+    groups = _group_by_hash([r["hash"] for r in rows], hash_thr, keys)
     rng = np.random.default_rng(seed)
     ug = rng.permutation(max(groups) + 1)
     n_tr, n_va = int(split[0] * len(ug)), int(split[1] * len(ug))
