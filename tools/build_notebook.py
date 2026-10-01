@@ -134,11 +134,10 @@ ROOTS = [r for r in (DEEPLURE, KAGGLE_DIR) if r]
 assert ROOTS, 'No data found'
 """)
 code("""
-from sareeid.data import prepare
-prepare(ROOTS, WORK)
-""")
-code("""
-import pandas as pd
+import pandas as pd, importlib, sareeid.data
+importlib.reload(sareeid.data)  # pick up the freshly written package file
+print('dataset roots:', ROOTS)
+sareeid.data.prepare(ROOTS, WORK)
 man = pd.read_csv(f'{WORK}/manifest.csv')
 display(man.groupby(['source','split']).size().unstack(fill_value=0))
 gs = man.groupby('group').size()
