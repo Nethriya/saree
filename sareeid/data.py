@@ -107,6 +107,8 @@ def prepare(roots: list[str], out_dir: str, short: int = 320, min_side: int = 96
     n_bad = n_small = n_dup = 0
     for root in roots:
         root_p = Path(root)
+        # kagglehub caches datasets as .../<slug>/versions/<n>: name the source by the slug
+        src_name = root_p.parent.parent.name if root_p.name.isdigit() and root_p.parent.name == "versions" else root_p.name
         for p in sorted(root_p.rglob("*")):
             if p.suffix.lower() not in IMG_EXT or not p.is_file():
                 continue
@@ -127,7 +129,7 @@ def prepare(roots: list[str], out_dir: str, short: int = 320, min_side: int = 96
             cp = out / "cache" / f"{md5}.jpg"
             if not cp.exists():
                 cv2.imwrite(str(cp), cv2.cvtColor(img, cv2.COLOR_RGB2BGR), [cv2.IMWRITE_JPEG_QUALITY, 95])
-            rows.append({"path": str(cp), "source": root_p.name, "orig": str(p), "hash": phash(img)})
+            rows.append({"path": str(cp), "source": src_name, "orig": str(p), "hash": phash(img)})
     keys = [r["source"] + "/" + source_stem(r["orig"]) if ".rf." in r["orig"] else r["orig"] for r in rows]
     groups = _group_by_hash([r["hash"] for r in rows], hash_thr, keys)
     rng = np.random.default_rng(seed)

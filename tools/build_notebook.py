@@ -1,12 +1,20 @@
-"""Generate the self-contained Kaggle notebook from the sareeid/ package sources.
+"""Generate the self-contained Kaggle and Colab notebooks from the sareeid/ package sources.
 
-  python tools/build_notebook.py   ->  notebooks/saree_colorinvariant_kaggle.ipynb
+  python tools/build_notebook.py   ->  notebooks/saree_colorinvariant_{kaggle,colab}.ipynb
 
-The package files are embedded with %%writefile, so the notebook runs as-is on Kaggle
-without cloning anything, and can never drift from the repository code.
+The package files are embedded with %%writefile, so the notebooks run as-is without cloning
+anything, and can never drift from the repository code. Only the setup/data cells differ.
 """
 import json
+import subprocess
+import sys
 from pathlib import Path
+
+if len(sys.argv) == 1:  # build both targets
+    for t in ("kaggle", "colab"):
+        subprocess.run([sys.executable, __file__, t], check=True)
+    sys.exit()
+TARGET = sys.argv[1]
 
 ROOT = Path(__file__).resolve().parents[1]
 MODULES = ["__init__", "recolor", "data", "model", "losses", "benchmark", "metrics", "evaluate",
@@ -25,7 +33,8 @@ def code(s, hidden=False):
                   "source": s.strip("\n")})
 
 
-md("""
+if TARGET == "kaggle":
+    md("""
 # AIE-CASE: color-invariant saree design recognition
 
 The task is face recognition for textiles: find the saree whose **design** matches a query photo, regardless of the **colorway** it was woven in.
@@ -35,8 +44,19 @@ The task is face recognition for textiles: find the saree whose **design** match
 2. the DeepLure Drive corpus, uploaded as a **private** Kaggle dataset (it is proprietary; do not make it public)
 
 Every image folder under `/kaggle/input` is found automatically. Then click **Run All**. The default config takes about 1–1.5 h on a T4.
+""")
+else:
+    md("""
+# AIE-CASE: color-invariant saree design recognition
 
-Approach note, evaluation protocol and efficiency report: see the README and the final cells.
+The task is face recognition for textiles: find the saree whose **design** matches a query photo, regardless of the **colorway** it was woven in.
+
+**Before running:**
+1. *Runtime → Change runtime type → T4 GPU*.
+2. Open the DeepLure Drive folder, click **▾ next to "sarees_dataset" → Organise → Add shortcut → My Drive**. The notebook reads it straight from your Drive; nothing is re-uploaded anywhere.
+3. *(optional)* Add a Colab secret 🔑 `KAGGLE_API_TOKEN` (your Kaggle token) to also use `div456/indian-saree-patterns`. Public datasets usually download without it.
+
+Then *Runtime → Run all*. Checkpoints and results are saved to `MyDrive/saree_runs`, so a disconnect loses nothing.
 """)
 
 md("""
@@ -53,7 +73,16 @@ except ImportError:
     subprocess.run([sys.executable, '-m', 'pip', 'install', '-q', 'timm'], check=True); import timm
 print('timm', timm.__version__)
 os.makedirs('sareeid', exist_ok=True)
-""")
+NW = os.cpu_count()  # dataloader workers
+""" + ("""
+W = '/kaggle/working'; WORK = f'{W}/work'
+""" if TARGET == "kaggle" else """
+from google.colab import drive
+drive.mount('/content/drive')
+W = '/content/drive/MyDrive/saree_runs'   # runs + results persist on Drive
+WORK = '/content/work'                    # image cache on fast local disk
+os.makedirs(W, exist_ok=True)
+"""))
 
 md("## Package source\nThe same code as the `sareeid/` package in the repo, written to disk here so the notebook is self-contained. Cells are collapsed.")
 for m in MODULES:
@@ -66,7 +95,8 @@ Pipeline: every image folder under `/kaggle/input` → decode (corrupt and <96 p
 
 Grouping by near-duplicate means a re-shot, rotated or re-uploaded copy of a test saree can never appear in train.
 """)
-code("""
+if TARGET == "kaggle":
+    code("""
 import glob
 from pathlib import Path
 IMG = {'.jpg','.jpeg','.png','.webp','.bmp','.tif','.tiff'}
@@ -74,15 +104,41 @@ ROOTS = sorted({str(Path(p).parents[0]) for p in glob.glob('/kaggle/input/**/*',
                 if Path(p).suffix.lower() in IMG})
 # collapse to top-level dataset dirs so 'source' is the dataset name
 ROOTS = sorted({'/'.join(r.split('/')[:4]) for r in ROOTS})
-print('\\n'.join(ROOTS))
+print(*ROOTS, sep='\\n')
 assert ROOTS, 'No images found: add the datasets via "Add Input"'
 """)
+else:
+    code("""
+import glob
+from pathlib import Path
+# DeepLure corpus: the 'sarees_dataset' shortcut in My Drive (searched one level deep as a fallback)
+cands = glob.glob('/content/drive/MyDrive/sarees_dataset') + glob.glob('/content/drive/MyDrive/*/sarees_dataset')
+DEEPLURE = cands[0] if cands else None
+print('DeepLure corpus:', DEEPLURE or 'NOT FOUND - add the Drive shortcut (see top cell)')
+# Kaggle saree patterns via kagglehub
+try:
+    from google.colab import userdata
+    os.environ['KAGGLE_API_TOKEN'] = userdata.get('KAGGLE_API_TOKEN')
+except Exception:
+    pass
+try:
+    import kagglehub
+except ImportError:
+    subprocess.run([sys.executable, '-m', 'pip', 'install', '-q', 'kagglehub'], check=True); import kagglehub
+try:
+    KAGGLE_DIR = kagglehub.dataset_download('div456/indian-saree-patterns')
+except Exception as e:
+    KAGGLE_DIR = None; print('Kaggle dataset skipped:', e)
+print('Kaggle dataset:', KAGGLE_DIR)
+ROOTS = [r for r in (DEEPLURE, KAGGLE_DIR) if r]
+assert ROOTS, 'No data found'
+""")
 code("""
-!python -m sareeid.prepare --roots {' '.join(ROOTS)} --out /kaggle/working/work
+!python -m sareeid.prepare --roots {' '.join(f'"{r}"' for r in ROOTS)} --out {WORK}
 """)
 code("""
 import pandas as pd
-man = pd.read_csv('/kaggle/working/work/manifest.csv')
+man = pd.read_csv(f'{WORK}/manifest.csv')
 display(man.groupby(['source','split']).size().unstack(fill_value=0))
 gs = man.groupby('group').size()
 print(f'{len(man)} images, {len(gs)} design groups, {(gs>1).sum()} groups with >1 near-duplicate photo')
@@ -124,15 +180,14 @@ Every benchmark image comes from a seeded spec, so all models see byte-identical
 md("## 4. Baselines (no training)\nThe ImageNet backbone used as-is, on RGB input and on grayscale input. Grayscale is the naive fix for color invariance; it fails when two different dyes have the same luminance, and when colorways invert light/dark.")
 code("""
 BACKBONE = 'convnext_atto.d2_in1k'
-W = '/kaggle/working'
-!python -m sareeid.evaluate --manifest {W}/work/manifest.csv --zero-shot {BACKBONE} --out {W}/results/zs_rgb.json --workers 4
-!python -m sareeid.evaluate --manifest {W}/work/manifest.csv --zero-shot {BACKBONE} --gray --out {W}/results/zs_gray.json --workers 4
+!python -m sareeid.evaluate --manifest {WORK}/manifest.csv --zero-shot {BACKBONE} --out {W}/results/zs_rgb.json --workers {NW}
+!python -m sareeid.evaluate --manifest {WORK}/manifest.csv --zero-shot {BACKBONE} --gray --out {W}/results/zs_gray.json --workers {NW}
 """)
 
 md("## 5. Train\nPK batches of 48 designs × 4 views; SupCon with τ=0.07; AdamW (head 3e-4, backbone 0.3×), cosine schedule with 1 warmup epoch, AMP. The checkpoint is selected on the val benchmark (mean R@1 of P1, P2 and P3).")
 code("""
 EPOCHS = 30
-!python -m sareeid.train --manifest {W}/work/manifest.csv --out {W}/runs/atto_rgb --backbone {BACKBONE} --epochs {EPOCHS} --P 48 --views 4 --eval-every 5 --workers 4
+!python -m sareeid.train --manifest {WORK}/manifest.csv --out {W}/runs/atto_rgb --backbone {BACKBONE} --epochs {EPOCHS} --P 48 --views 4 --eval-every 5 --workers {NW}
 """)
 code("""
 import json
@@ -145,19 +200,19 @@ for k in ['P1 R@1', 'P2 R@1', 'P3 R@1', 'Same-palette AUC']:
 ax[1].set_title('val benchmark'); ax[1].legend(); ax[1].set_xlabel('epoch'); plt.show()
 """)
 code("""
-!python -m sareeid.evaluate --manifest {W}/work/manifest.csv --ckpt {W}/runs/atto_rgb/best.pt --out {W}/results/atto_rgb.json --workers 4
+!python -m sareeid.evaluate --manifest {WORK}/manifest.csv --ckpt {W}/runs/atto_rgb/best.pt --out {W}/results/atto_rgb.json --workers {NW}
 """)
 
 md("### Ablations (optional, set `RUN_ABLATIONS=True`)\n- **gray**: the same training on grayscale input. Does the RGB model actually use chromatic edges?\n- **no palette bank**: palette-transfer targets drawn independently per sample instead of from a shared bank (the `--bank 0` path).\n- **bigger backbone**: ConvNeXt-Tiny (28M). How much accuracy does the lean model give up?")
 code("""
 RUN_ABLATIONS = False
 if RUN_ABLATIONS:
-    !python -m sareeid.train --manifest {W}/work/manifest.csv --out {W}/runs/atto_gray --backbone {BACKBONE} --epochs {EPOCHS} --gray --eval-every 5 --workers 4
-    !python -m sareeid.evaluate --manifest {W}/work/manifest.csv --ckpt {W}/runs/atto_gray/best.pt --out {W}/results/atto_gray.json --workers 4
-    !python -m sareeid.train --manifest {W}/work/manifest.csv --out {W}/runs/atto_nobank --backbone {BACKBONE} --epochs {EPOCHS} --bank 0 --eval-every 5 --workers 4
-    !python -m sareeid.evaluate --manifest {W}/work/manifest.csv --ckpt {W}/runs/atto_nobank/best.pt --out {W}/results/atto_nobank.json --workers 4
-    !python -m sareeid.train --manifest {W}/work/manifest.csv --out {W}/runs/tiny_rgb --backbone convnext_tiny.in12k_ft_in1k --epochs {EPOCHS} --P 32 --eval-every 5 --workers 4
-    !python -m sareeid.evaluate --manifest {W}/work/manifest.csv --ckpt {W}/runs/tiny_rgb/best.pt --out {W}/results/tiny_rgb.json --workers 4
+    !python -m sareeid.train --manifest {WORK}/manifest.csv --out {W}/runs/atto_gray --backbone {BACKBONE} --epochs {EPOCHS} --gray --eval-every 5 --workers {NW}
+    !python -m sareeid.evaluate --manifest {WORK}/manifest.csv --ckpt {W}/runs/atto_gray/best.pt --out {W}/results/atto_gray.json --workers {NW}
+    !python -m sareeid.train --manifest {WORK}/manifest.csv --out {W}/runs/atto_nobank --backbone {BACKBONE} --epochs {EPOCHS} --bank 0 --eval-every 5 --workers {NW}
+    !python -m sareeid.evaluate --manifest {WORK}/manifest.csv --ckpt {W}/runs/atto_nobank/best.pt --out {W}/results/atto_nobank.json --workers {NW}
+    !python -m sareeid.train --manifest {WORK}/manifest.csv --out {W}/runs/tiny_rgb --backbone convnext_tiny.in12k_ft_in1k --epochs {EPOCHS} --P 32 --eval-every 5 --workers {NW}
+    !python -m sareeid.evaluate --manifest {WORK}/manifest.csv --ckpt {W}/runs/tiny_rgb/best.pt --out {W}/results/tiny_rgb.json --workers {NW}
 """)
 
 md("## 6. Results (test split)")
@@ -190,11 +245,11 @@ from sareeid.benchmark import build_specs, SpecDataset, embed_specs
 from sareeid.data import load_manifest
 from sareeid.model import load_checkpoint
 dev = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-test_items = load_manifest(f'{W}/work/manifest.csv', 'test')
+test_items = load_manifest(f'{WORK}/manifest.csv', 'test')
 B = build_specs(test_items, seed=0); S = B['specs']; ds = SpecDataset(S)
 model, ck = load_checkpoint(f'{W}/runs/atto_rgb/best.pt'); model.to(dev)
 idx = B['gallery'] + B['trap']
-Z = embed_specs(model, [S[i] for i in idx], dev, workers=4)
+Z = embed_specs(model, [S[i] for i in idx], dev, workers=NW)
 G, Q = Z[:len(B['gallery'])], Z[len(B['gallery']):]
 sel = np.random.default_rng(0).choice(len(Q), 6, replace=False)
 fig, ax = plt.subplots(len(sel), 6, figsize=(12, 2.1*len(sel)))
@@ -243,10 +298,14 @@ nb = {"cells": cells, "metadata": {"kernelspec": {"display_name": "Python 3", "l
                                    "language_info": {"name": "python"},
                                    "kaggle": {"accelerator": "gpu", "isInternetEnabled": True}},
       "nbformat": 4, "nbformat_minor": 5}
-for c in nb["cells"]:  # nbformat wants a list of lines
+if TARGET == "colab":
+    nb["metadata"]["accelerator"] = "GPU"
+    nb["metadata"]["colab"] = {"gpuType": "T4", "provenance": []}
+for i, c in enumerate(nb["cells"]):  # nbformat 4.5: list of lines + cell id
+    c["id"] = f"c{i:03d}"
     c["source"] = [l + "\n" for l in c["source"].split("\n")]
     c["source"][-1] = c["source"][-1].rstrip("\n")
-out = ROOT / "notebooks" / "saree_colorinvariant_kaggle.ipynb"
+out = ROOT / "notebooks" / f"saree_colorinvariant_{TARGET}.ipynb"
 out.parent.mkdir(exist_ok=True)
 out.write_text(json.dumps(nb, indent=1), encoding="utf8")
 print("wrote", out)

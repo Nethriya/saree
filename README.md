@@ -2,7 +2,11 @@
 
 Given a photo of a saree, find the matching **design** in a gallery (identification) or decide whether two photos show the same design (verification), **regardless of the colorway**. It works like face recognition for textiles.
 
-**Run it:** [`notebooks/saree_colorinvariant_kaggle.ipynb`](notebooks/saree_colorinvariant_kaggle.ipynb) is self-contained. On Kaggle, set GPU on and Internet on, add the two datasets, then Run All (about 1–1.5 h on a T4).
+**Run it:** both notebooks are self-contained and generated from the same package code (`tools/build_notebook.py`).
+- **Colab:** [`notebooks/saree_colorinvariant_colab.ipynb`](notebooks/saree_colorinvariant_colab.ipynb). Use a T4 runtime. The DeepLure corpus is read from a Drive shortcut, the Kaggle set comes via `kagglehub`, and outputs go to `MyDrive/saree_runs`.
+- **Kaggle:** [`notebooks/saree_colorinvariant_kaggle.ipynb`](notebooks/saree_colorinvariant_kaggle.ipynb). Turn on GPU and Internet and add both datasets as inputs.
+
+Then Run All (about 1–1.5 h on a T4).
 
 ## Approach note (≤500 chars)
 
