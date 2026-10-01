@@ -17,13 +17,17 @@ from .model import SareeEmbedder, load_checkpoint
 
 @torch.no_grad()
 def latency_ms(model, x, n=50, warm=10):
-    for _ in range(warm):
-        model(x)
+    # fp16 on GPU via autocast (same as eval); GeM deliberately pools in fp32
+    amp = torch.autocast(device_type="cuda", dtype=torch.float16, enabled=x.is_cuda)
+    with amp:
+        for _ in range(warm):
+            model(x)
     if x.is_cuda:
         torch.cuda.synchronize()
     t = time.perf_counter()
-    for _ in range(n):
-        model(x)
+    with amp:
+        for _ in range(n):
+            model(x)
     if x.is_cuda:
         torch.cuda.synchronize()
     return (time.perf_counter() - t) / n * 1000
@@ -47,12 +51,12 @@ def report(model: SareeEmbedder, size: int = 224) -> dict:
     }
     out["embedding_bytes_fp16"] = out["embedding_dim"] * 2
     if torch.cuda.is_available():
-        m = model.cuda().half()
+        m = model.cuda()
         out["gpu"] = torch.cuda.get_device_name(0)
-        out["gpu_latency_ms_bs1_fp16"] = latency_ms(m, x.cuda().half())
-        xb = torch.randn(64, 3, size, size, device="cuda", dtype=torch.half)
+        out["gpu_latency_ms_bs1_fp16"] = latency_ms(m, x.cuda())
+        xb = torch.randn(64, 3, size, size, device="cuda")
         out["gpu_throughput_img_s_bs64_fp16"] = 64 / (latency_ms(m, xb, n=20) / 1000)
-        model.float().cpu()
+        model.cpu()
     return out
 
 
